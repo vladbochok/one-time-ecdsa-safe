@@ -48,7 +48,10 @@ abstract contract OneTimeSignerTestBase is Test {
     uint256 internal constant GUARD_STORAGE_SLOT = 0x4a204f620c8c5ccdca3fd54d003badd85ba500436a431f0cbda4f558c93c34c8;
     // keccak256("fallback_manager.handler.address")
     uint256 internal constant FALLBACK_HANDLER_STORAGE_SLOT = 0x6c9a6c4a39284e37ed1cf53d337577d14212a4870fb976a4366c693b939918d5;
+    // keccak256("module_manager.module_guard.address")
+    uint256 internal constant MODULE_GUARD_STORAGE_SLOT = 0xb104e0b93118902c651344349b610029d694cfdec91c589c91ebafbcd0289947;
     address internal constant SENTINEL_OWNERS = address(0x1);
+    address internal constant SENTINEL_MODULES = address(0x1);
 
     Safe internal singleton;
     SafeProxyFactory internal factory;
@@ -66,7 +69,7 @@ abstract contract OneTimeSignerTestBase is Test {
         signMessageLib = new SignMessageLib();
         guard = new OneTimeSignerGuard();
         handler = new OneTimeSignerFallbackHandler();
-        setupHelper = new OneTimeSignerSetup();
+        setupHelper = new OneTimeSignerSetup(guard, handler);
     }
 
     /// @dev Overridden to run the same tests against `SafeL2`.
@@ -232,11 +235,16 @@ abstract contract OneTimeSignerTestBase is Test {
         list[2] = c;
     }
 
-    /// @dev Deploys a Safe in one factory call, optionally with the guard.
-    function createSafe(address[] memory safeOwners, uint256 threshold, bool withGuard) internal returns (Safe) {
-        address to = withGuard ? address(setupHelper) : address(0);
-        bytes memory data = withGuard ? abi.encodeCall(OneTimeSignerSetup.enableGuard, (address(guard))) : bytes("");
-        address fallbackHandler = withGuard ? address(handler) : address(0);
+    /// @dev Deploys a Safe in one factory call, optionally configured by {OneTimeSignerSetup}.
+    function createSafe(address[] memory safeOwners, uint256 threshold, bool configured) internal returns (Safe) {
+        if (!configured) return createSafe(safeOwners, threshold, address(0), "", address(0));
+        return createSafe(safeOwners, threshold, address(setupHelper), abi.encodeCall(OneTimeSignerSetup.configure, ()), address(0));
+    }
+
+    function createSafe(address[] memory safeOwners, uint256 threshold, address to, bytes memory data, address fallbackHandler)
+        internal
+        returns (Safe)
+    {
         bytes memory initializer =
             abi.encodeCall(ISafe.setup, (safeOwners, threshold, to, data, fallbackHandler, address(0), 0, payable(address(0))));
         return Safe(payable(address(factory.createProxyWithNonce(address(singleton), initializer, saltNonce++))));
@@ -271,8 +279,8 @@ abstract contract OneTimeSignerTestBase is Test {
         return abi.decode(safe.getStorageAt(slot, 1), (address));
     }
 
-    function encodeMultiSendCall(address to, bytes memory data) internal pure returns (bytes memory) {
-        return abi.encodePacked(uint8(Enum.Operation.Call), to, uint256(0), data.length, data);
+    function encodeMultiSendTx(Enum.Operation operation, address to, bytes memory data) internal pure returns (bytes memory) {
+        return abi.encodePacked(uint8(operation), to, uint256(0), data.length, data);
     }
 
     function encodeCheckTransaction(SafeTx memory safeTx, bytes memory signatures, address msgSender) internal pure returns (bytes memory) {

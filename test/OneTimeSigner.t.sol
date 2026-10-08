@@ -3,8 +3,8 @@ pragma solidity ^0.8.21;
 
 import {Safe} from "@safe-global/safe-smart-account/contracts/Safe.sol";
 import {SafeL2} from "@safe-global/safe-smart-account/contracts/SafeL2.sol";
-import {IFallbackManager} from "@safe-global/safe-smart-account/contracts/interfaces/IFallbackManager.sol";
-import {IGuardManager} from "@safe-global/safe-smart-account/contracts/interfaces/IGuardManager.sol";
+import {CompatibilityFallbackHandler} from "@safe-global/safe-smart-account/contracts/handler/CompatibilityFallbackHandler.sol";
+import {IModuleManager} from "@safe-global/safe-smart-account/contracts/interfaces/IModuleManager.sol";
 import {IOwnerManager} from "@safe-global/safe-smart-account/contracts/interfaces/IOwnerManager.sol";
 import {ISafe} from "@safe-global/safe-smart-account/contracts/interfaces/ISafe.sol";
 import {Enum} from "@safe-global/safe-smart-account/contracts/libraries/Enum.sol";
@@ -12,6 +12,7 @@ import {MultiSend} from "@safe-global/safe-smart-account/contracts/libraries/Mul
 import {SignMessageLib} from "@safe-global/safe-smart-account/contracts/libraries/SignMessageLib.sol";
 import {OneTimeSignerFallbackHandler} from "../src/OneTimeSignerFallbackHandler.sol";
 import {OneTimeSignerGuard} from "../src/OneTimeSignerGuard.sol";
+import {OneTimeSignerSetup} from "../src/OneTimeSignerSetup.sol";
 import {OneTimeSignerVault} from "../src/OneTimeSignerVault.sol";
 import {KeyPool, OneTimeSigner, OneTimeSignerTestBase, SafeSignature, SafeTx} from "./utils/OneTimeSignerTestBase.sol";
 
@@ -20,6 +21,7 @@ contract OneTimeSignerTest is OneTimeSignerTestBase {
     string internal constant BAD_ENCODING = "Signatures must encode exactly threshold vault signatures";
 
     address internal recipient = makeAddr("recipient");
+    address internal module = makeAddr("module");
     OneTimeSignerVault internal aliceVault;
     OneTimeSignerVault internal bobVault;
     OneTimeSignerVault internal carolVault;
@@ -59,18 +61,57 @@ contract OneTimeSignerTest is OneTimeSignerTestBase {
         revert("Not an owner");
     }
 
+    function enableModuleTx(Safe target) internal view returns (SafeTx memory) {
+        return callTx(target, address(target), 0, abi.encodeCall(IModuleManager.enableModule, (module)));
+    }
+
     // --- Setup ---
 
-    function test_setup_EnablesGuardAndFallbackHandler() public view {
+    function test_setup_ConfiguresGuardsAndFallbackHandler() public view {
         assertEq(readSlot(safe, GUARD_STORAGE_SLOT), address(guard));
+        assertEq(readSlot(safe, MODULE_GUARD_STORAGE_SLOT), address(guard));
         assertEq(readSlot(safe, FALLBACK_HANDLER_STORAGE_SLOT), address(handler));
         assertEq(safe.getOwners(), owners(alice(), bob(), carol()));
         assertEq(safe.getThreshold(), 2);
     }
 
+    function test_setup_OverridesFallbackHandler() public {
+        // The standard handler would accept vault signatures off-chain, without burning the keys.
+        address compatibilityHandler = address(new CompatibilityFallbackHandler());
+        bytes memory configure = abi.encodeCall(OneTimeSignerSetup.configure, ());
+        Safe configured = createSafe(owners(alice(), bob(), carol()), 2, address(setupHelper), configure, compatibilityHandler);
+        assertEq(readSlot(configured, FALLBACK_HANDLER_STORAGE_SLOT), address(handler));
+
+        bytes32 dataHash = keccak256("0xbaddad");
+        bytes32 messageHash = handler.getMessageHashForSafe(ISafe(payable(address(configured))), abi.encode(dataHash));
+        bytes memory signatures = encodeSignatures(sigs(signWithKey(alice(), 0, messageHash), signWithKey(bob(), 0, messageHash)));
+        vm.expectRevert(bytes("Only on-chain signed messages are supported"));
+        OneTimeSignerFallbackHandler(address(configured)).isValidSignature(dataHash, signatures);
+    }
+
     function test_setup_RevertsWhen_NotDelegatecalled() public {
         vm.expectRevert(bytes("Must be delegatecalled"));
-        setupHelper.enableGuard(address(guard));
+        setupHelper.configure();
+    }
+
+    function test_setup_RevertsWhen_DeployedWithoutGuardOrHandler() public {
+        vm.expectRevert(bytes("Invalid guard"));
+        new OneTimeSignerSetup(OneTimeSignerGuard(address(0)), handler);
+        vm.expectRevert(bytes("Invalid fallback handler"));
+        new OneTimeSignerSetup(guard, OneTimeSignerFallbackHandler(address(0)));
+    }
+
+    // --- Modules ---
+
+    function test_modules_RejectsModuleTransactions() public {
+        SafeTx memory enableTx = enableModuleTx(safe);
+        bytes32 hash = hashOf(safe, enableTx);
+        exec(safe, enableTx, sigs(signWithKey(alice(), 0, hash), signWithKey(bob(), 0, hash)));
+        assertTrue(safe.isModuleEnabled(module));
+
+        vm.prank(module);
+        vm.expectRevert(bytes("Module transactions are disabled"));
+        safe.execTransactionFromModule(recipient, 1, "", Enum.Operation.Call);
     }
 
     // --- execTransaction ---
@@ -325,8 +366,10 @@ contract OneTimeSignerTest is OneTimeSignerTestBase {
         Account[3] memory eoaOwners = [makeAccount("owner0"), makeAccount("owner1"), makeAccount("owner2")];
         Safe legacy = createSafe(addrs(eoaOwners[0].addr, eoaOwners[1].addr, eoaOwners[2].addr), 2, false);
         OneTimeSigner[3] memory vaultOwners = [newSigner("dave", 4), newSigner("erin", 4), newSigner("frank", 4)];
+        vm.deal(address(legacy), 2);
+        enableModuleBeforeMigration(legacy, eoaOwners);
 
-        // The current owners enable the guard and handler and swap themselves for vaults in one transaction.
+        // The current owners configure the Safe and swap themselves for vaults in one transaction.
         SafeTx memory migration = SafeTx(
             address(multiSend),
             0,
@@ -337,10 +380,14 @@ contract OneTimeSignerTest is OneTimeSignerTestBase {
         exec(legacy, migration, signWithEoas(eoaOwners, hashOf(legacy, migration)));
 
         assertEq(readSlot(legacy, GUARD_STORAGE_SLOT), address(guard));
+        assertEq(readSlot(legacy, MODULE_GUARD_STORAGE_SLOT), address(guard));
         assertEq(readSlot(legacy, FALLBACK_HANDLER_STORAGE_SLOT), address(handler));
         assertEq(legacy.getOwners(), owners(vaultOwners[0], vaultOwners[1], vaultOwners[2]));
+        assertFalse(legacy.isModuleEnabled(module));
+        vm.prank(module);
+        vm.expectRevert(bytes("GS104"));
+        legacy.execTransactionFromModule(recipient, 1, "", Enum.Operation.Call);
 
-        vm.deal(address(legacy), 1);
         SafeTx memory next = callTx(legacy, recipient, 1, "");
         bytes32 nextHash = hashOf(legacy, next);
         SafeSignature[] memory oldOwnerSignatures = signWithEoas(eoaOwners, nextHash);
@@ -349,6 +396,15 @@ contract OneTimeSignerTest is OneTimeSignerTestBase {
 
         exec(legacy, next, sigs(signWithKey(vaultOwners[0], 0, nextHash), signWithKey(vaultOwners[1], 0, nextHash)));
         assertTrue(guard.isKeyUsed(address(legacy), vaultOwners[0].pool.keys[0]));
+        assertEq(recipient.balance, 2);
+    }
+
+    /// @dev A module controlled by an ordinary key, which can move funds without any owner signature.
+    function enableModuleBeforeMigration(Safe legacy, Account[3] memory eoaOwners) internal {
+        SafeTx memory enableTx = enableModuleTx(legacy);
+        exec(legacy, enableTx, signWithEoas(eoaOwners, hashOf(legacy, enableTx)));
+        vm.prank(module);
+        legacy.execTransactionFromModule(recipient, 1, "", Enum.Operation.Call);
         assertEq(recipient.balance, 1);
     }
 
@@ -357,16 +413,13 @@ contract OneTimeSignerTest is OneTimeSignerTestBase {
         view
         returns (bytes memory batch)
     {
-        batch = bytes.concat(
-            encodeMultiSendCall(address(legacy), abi.encodeCall(IGuardManager.setGuard, (address(guard)))),
-            encodeMultiSendCall(address(legacy), abi.encodeCall(IFallbackManager.setFallbackHandler, (address(handler))))
-        );
+        batch = encodeMultiSendTx(Enum.Operation.DelegateCall, address(setupHelper), abi.encodeCall(OneTimeSignerSetup.configure, ()));
         // `swapOwner` keeps list positions, so each vault precedes the next swap.
         address prevOwner = SENTINEL_OWNERS;
         for (uint256 i = 0; i < 3; ++i) {
             address vault = address(vaultOwners[i].vault);
             bytes memory swap = abi.encodeCall(IOwnerManager.swapOwner, (prevOwner, eoaOwners[i].addr, vault));
-            batch = bytes.concat(batch, encodeMultiSendCall(address(legacy), swap));
+            batch = bytes.concat(batch, encodeMultiSendTx(Enum.Operation.Call, address(legacy), swap));
             prevOwner = vault;
         }
     }

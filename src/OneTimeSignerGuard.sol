@@ -1,19 +1,22 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 pragma solidity >=0.7.0 <0.9.0;
 
-import {BaseTransactionGuard} from "@safe-global/safe-smart-account/contracts/base/GuardManager.sol";
+import {BaseTransactionGuard, ITransactionGuard} from "@safe-global/safe-smart-account/contracts/base/GuardManager.sol";
+import {BaseModuleGuard, IModuleGuard} from "@safe-global/safe-smart-account/contracts/base/ModuleManager.sol";
 import {SignatureDecoder} from "@safe-global/safe-smart-account/contracts/common/SignatureDecoder.sol";
 import {SafeMath} from "@safe-global/safe-smart-account/contracts/external/SafeMath.sol";
+import {IERC165} from "@safe-global/safe-smart-account/contracts/interfaces/IERC165.sol";
 import {ISafe} from "@safe-global/safe-smart-account/contracts/interfaces/ISafe.sol";
 import {Enum} from "@safe-global/safe-smart-account/contracts/libraries/Enum.sol";
 
 /**
  * @title OneTimeSignerGuard - Burns every one-time key that signs a Safe transaction.
  * @notice For Safes owned by {OneTimeSignerVault}s. Rejects anything but exactly `threshold` vault signatures, since an extra
- *         signature would expose a key without burning it.
+ *         signature would expose a key without burning it. As module guard, rejects module transactions, which need no
+ *         owner signature at all.
  * @dev Used keys are tracked per caller, so direct calls only burn the caller's own keys. No fallback: fails closed.
  */
-contract OneTimeSignerGuard is BaseTransactionGuard, SignatureDecoder {
+contract OneTimeSignerGuard is BaseTransactionGuard, BaseModuleGuard, SignatureDecoder {
     using SafeMath for uint256;
 
     // Safe => one-time key => used
@@ -21,6 +24,11 @@ contract OneTimeSignerGuard is BaseTransactionGuard, SignatureDecoder {
 
     event KeyUsed(address indexed safe, address indexed vault, address indexed key);
     event KeyRevoked(address indexed safe, address indexed key);
+
+    function supportsInterface(bytes4 interfaceId) external view virtual override(BaseTransactionGuard, BaseModuleGuard) returns (bool) {
+        return interfaceId == type(ITransactionGuard).interfaceId || interfaceId == type(IModuleGuard).interfaceId
+            || interfaceId == type(IERC165).interfaceId;
+    }
 
     /**
      * @dev Expects `threshold` contract signatures followed by their dynamic parts in order, with nothing after.
@@ -54,6 +62,12 @@ contract OneTimeSignerGuard is BaseTransactionGuard, SignatureDecoder {
     }
 
     function checkAfterExecution(bytes32, bool) external view override {}
+
+    function checkModuleTransaction(address, uint256, bytes memory, Enum.Operation, address) external pure override returns (bytes32) {
+        revert("Module transactions are disabled");
+    }
+
+    function checkAfterModuleExecution(bytes32, bool) external view override {}
 
     /// @notice Burns keys of the calling Safe, e.g. keys whose signatures were shared but never executed.
     function revokeKeys(address[] calldata keys) external {

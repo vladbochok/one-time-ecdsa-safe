@@ -40,14 +40,14 @@ These matter as much as the contracts:
 ## Design
 
 Each signer has a vault, a Safe owner that commits to their pool of addresses with a Merkle root. A guard burns every key that
-signs, in the same transaction. There is no module and no change to Safe.
+signs, in the same transaction. Safe itself is unchanged, and modules are disabled because they bypass owner signatures.
 
 | Contract | Role |
 |---|---|
 | `OneTimeSignerVault` | Safe owner (EIP-1271). Accepts a signature from an unused key in its pool. One per signer, so the threshold still counts people. |
-| `OneTimeSignerGuard` | Transaction guard. Burns each signing key and rejects extra signatures, which would expose keys without burning them. |
+| `OneTimeSignerGuard` | Transaction guard: burns each signing key and rejects extra signatures, which would expose keys without burning them. Module guard: rejects module transactions, which need no owner signature. |
 | `OneTimeSignerFallbackHandler` | Accepts only messages signed on-chain, because off-chain signatures can't burn keys. |
-| `OneTimeSignerSetup` | Enables the guard during `Safe.setup`. |
+| `OneTimeSignerSetup` | Configures a Safe at setup or migration in one step: disables all modules and sets both guards and the fallback handler. |
 
 To rotate a pool, swap in a new vault with `swapOwner`. Replacing the ECDSA keys with hash-based one-time keys (e.g. WOTS+) would
 remove the dependency on ECDSA entirely.
