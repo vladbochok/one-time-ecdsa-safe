@@ -29,7 +29,7 @@ contract OneTimeSignerTest is OneTimeSignerTestBase {
         super.setUp();
         aliceVault = newSigner("alice", 8).vault;
         bobVault = newSigner("bob", 8).vault;
-        // An odd number of keys, so the last leaf is promoted without a sibling.
+        // Odd pool size: the last leaf has no sibling.
         carolVault = newSigner("carol", 5).vault;
         safe = createOneTimeSignerSafe(owners(alice(), bob(), carol()), 2);
         vm.deal(address(safe), 1 ether);
@@ -163,7 +163,7 @@ contract OneTimeSignerTest is OneTimeSignerTestBase {
         bytes32 hash = hashOf(safe, safeTx);
         KeyPool memory pool = alice().pool;
         (uint8 v, bytes32 r, bytes32 s) = signDigest(pool.privateKeys[0], hash);
-        // (r, n - s) with the flipped recovery id is another valid signature of the same key.
+        // (r, n - s) with the flipped v recovers the same key.
         bytes32 highS = bytes32(SECP256K1_N - uint256(s));
         uint8 flippedV = v == 27 ? 28 : 27;
         assertEq(ecrecover(hash, flippedV, r, highS), pool.keys[0]);
@@ -198,7 +198,7 @@ contract OneTimeSignerTest is OneTimeSignerTestBase {
         assertFalse(guard.isKeyUsed(address(safe), carol().pool.keys[0]));
     }
 
-    /// @dev The Safe ignores trailing bytes, so e.g. a third signature appended there would be published without being burned.
+    /// @dev The Safe ignores trailing bytes, which could carry extra, unburned signatures.
     function testFuzz_exec_RevertsWhen_SignatureDataAppended(bytes memory extra) public {
         vm.assume(extra.length > 0);
         SafeTx memory safeTx = transfer();
@@ -236,7 +236,7 @@ contract OneTimeSignerTest is OneTimeSignerTestBase {
         SafeTx memory second = SafeTx(recipient, 1, "", Enum.Operation.Call, nonce + 1);
         bytes32 firstHash = hashOf(safe, first);
         bytes32 secondHash = hashOf(safe, second);
-        // Both transactions are signed before either executes, each with its own keys.
+        // Both signed before either executes, with different keys.
         SafeSignature[] memory firstSignatures = sigs(signWithKey(alice(), 0, firstHash), signWithKey(bob(), 0, firstHash));
         SafeSignature[] memory secondSignatures = sigs(signWithKey(alice(), 1, secondHash), signWithKey(carol(), 0, secondHash));
 
@@ -250,7 +250,7 @@ contract OneTimeSignerTest is OneTimeSignerTestBase {
 
     function test_revokeKeys_BurnsKeysOfAbandonedTransaction() public {
         address[] memory abandonedKeys = addrs(alice().pool.keys[0], bob().pool.keys[0]);
-        // Replace the abandoned transaction (same nonce) with one revoking its keys.
+        // Replaces the abandoned transaction (same nonce).
         SafeTx memory revokeTx = callTx(safe, address(guard), 0, abi.encodeCall(OneTimeSignerGuard.revokeKeys, (abandonedKeys)));
         bytes32 revokeHash = hashOf(safe, revokeTx);
         SafeSignature[] memory revokeSignatures = sigs(signWithKey(alice(), 1, revokeHash), signWithKey(bob(), 1, revokeHash));
@@ -287,7 +287,7 @@ contract OneTimeSignerTest is OneTimeSignerTestBase {
         SafeSignature memory aliceSignature = signWithKey(alice(), 0, pendingHash);
         SafeSignature memory bobSignature = signWithKey(bob(), 0, pendingHash);
 
-        // Another Safe replays one of the pending signatures into the guard.
+        // Another Safe replays a pending signature into the guard.
         (address attacker, uint256 attackerKey) = makeAddrAndKey("attacker");
         Safe otherSafe = createSafe(addrs(attacker), 1, false);
         bytes memory replay = encodeCheckTransaction(pending, encodeSignatures(sigs(aliceSignature)), attacker);
@@ -326,8 +326,7 @@ contract OneTimeSignerTest is OneTimeSignerTestBase {
         Safe legacy = createSafe(addrs(eoaOwners[0].addr, eoaOwners[1].addr, eoaOwners[2].addr), 2, false);
         OneTimeSigner[3] memory vaultOwners = [newSigner("dave", 4), newSigner("erin", 4), newSigner("frank", 4)];
 
-        // One transaction signed by the current owners enables the guard and the handler and replaces every owner with a
-        // vault. The guard only applies from the next transaction on.
+        // The current owners enable the guard and handler and swap themselves for vaults in one transaction.
         SafeTx memory migration = SafeTx(
             address(multiSend),
             0,
@@ -362,7 +361,7 @@ contract OneTimeSignerTest is OneTimeSignerTestBase {
             encodeMultiSendCall(address(legacy), abi.encodeCall(IGuardManager.setGuard, (address(guard)))),
             encodeMultiSendCall(address(legacy), abi.encodeCall(IFallbackManager.setFallbackHandler, (address(handler))))
         );
-        // `swapOwner` keeps the position in the owner list, so each vault is the previous owner of the next swap.
+        // `swapOwner` keeps list positions, so each vault precedes the next swap.
         address prevOwner = SENTINEL_OWNERS;
         for (uint256 i = 0; i < 3; ++i) {
             address vault = address(vaultOwners[i].vault);
@@ -372,7 +371,7 @@ contract OneTimeSignerTest is OneTimeSignerTestBase {
         }
     }
 
-    /// @dev Signs with the first two of the EOA owners, which meets the threshold of 2.
+    /// @dev Signs with two of the three EOA owners.
     function signWithEoas(Account[3] memory eoaOwners, bytes32 hash) internal pure returns (SafeSignature[] memory) {
         return sigs(signWithEoa(eoaOwners[0].addr, eoaOwners[0].key, hash), signWithEoa(eoaOwners[1].addr, eoaOwners[1].key, hash));
     }
@@ -384,7 +383,7 @@ contract OneTimeSignerTest is OneTimeSignerTestBase {
         bytes32 messageHash = handler.getMessageHashForSafe(ISafe(payable(address(safe))), abi.encode(dataHash));
         bytes memory signatures = encodeSignatures(sigs(signWithKey(alice(), 0, messageHash), signWithKey(bob(), 0, messageHash)));
 
-        // The signatures are valid for the Safe, but the handler only accepts messages signed on-chain.
+        // Valid for the Safe, but the handler only accepts on-chain signed messages.
         safe.checkSignatures(address(0), messageHash, signatures);
         vm.expectRevert(bytes("Only on-chain signed messages are supported"));
         OneTimeSignerFallbackHandler(address(safe)).isValidSignature(dataHash, signatures);
@@ -442,7 +441,7 @@ contract OneTimeSignerTest is OneTimeSignerTestBase {
     }
 }
 
-/// @dev Runs every test against `SafeL2`, which emits events from `execTransaction`.
+/// @dev Runs every test against `SafeL2`.
 contract OneTimeSignerL2Test is OneTimeSignerTest {
     function deploySingleton() internal override returns (Safe) {
         return new SafeL2();

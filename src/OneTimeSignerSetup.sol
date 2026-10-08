@@ -4,12 +4,9 @@ pragma solidity >=0.7.0 <0.9.0;
 import {ISafe} from "@safe-global/safe-smart-account/contracts/interfaces/ISafe.sol";
 
 /**
- * @title OneTimeSignerSetup - Enables {OneTimeSignerGuard} while a Safe is being set up.
- * @notice {OneTimeSignerVault}s refuse to sign for a Safe without the guard, so a Safe owned by vaults must have the guard
- *         from the start. Pass this contract as `to` and `enableGuard(guard)` as `data` to `Safe.setup`.
- * @dev The Safe delegatecalls `enableGuard` during setup, which then calls `setGuard` on the Safe itself. Using
- *      `address(this)` avoids having to know the Safe address when building the setup data, which would be circular when
- *      the Safe is deployed through `SafeProxyFactory` with an initializer.
+ * @title OneTimeSignerSetup - Enables {OneTimeSignerGuard} during `Safe.setup`.
+ * @notice Pass as `to` with `enableGuard(guard)` as `data`. Vaults only sign for Safes with the guard, so it is set from the start.
+ * @dev Calls `setGuard` on `address(this)`, so the setup data doesn't need the not yet known Safe address.
  */
 contract OneTimeSignerSetup {
     address private immutable SELF;
@@ -18,10 +15,7 @@ contract OneTimeSignerSetup {
         SELF = address(this);
     }
 
-    /**
-     * @notice Enables `guard` on the calling Safe. Must be delegatecalled by the Safe, typically from `Safe.setup`.
-     * @param guard Address of the {OneTimeSignerGuard}.
-     */
+    /// @notice Enables `guard` on the calling Safe. Must be delegatecalled.
     function enableGuard(address guard) external {
         require(address(this) != SELF, "Must be delegatecalled");
         ISafe(payable(address(this))).setGuard(guard);

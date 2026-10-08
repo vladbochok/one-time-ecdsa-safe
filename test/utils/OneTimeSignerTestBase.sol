@@ -13,7 +13,7 @@ import {OneTimeSignerGuard} from "../../src/OneTimeSignerGuard.sol";
 import {OneTimeSignerSetup} from "../../src/OneTimeSignerSetup.sol";
 import {OneTimeSignerVault} from "../../src/OneTimeSignerVault.sol";
 
-/// @dev A pool of one-time keys and the Merkle tree committing to their addresses, as a signer would generate it off-chain.
+/// @dev One-time keys and the Merkle tree over their addresses.
 struct KeyPool {
     uint256[] privateKeys;
     address[] keys;
@@ -26,7 +26,7 @@ struct OneTimeSigner {
     OneTimeSignerVault vault;
 }
 
-/// @dev A Safe signature. `dynamic` signatures (contract signatures) have their data appended to the dynamic part.
+/// @dev A Safe signature; `dynamic` (contract) signatures put their data in the dynamic part.
 struct SafeSignature {
     address signer;
     bytes data;
@@ -136,7 +136,7 @@ abstract contract OneTimeSignerTestBase is Test {
 
     // --- Signatures ---
 
-    /// @dev Signs like a wallet would: `s` is normalized to the lower half of the curve.
+    /// @dev Normalizes `s` to the lower half, like wallets do.
     function signDigest(uint256 privateKey, bytes32 digest) internal pure returns (uint8 v, bytes32 r, bytes32 s) {
         (v, r, s) = vm.sign(privateKey, digest);
         if (uint256(s) > SECP256K1_N / 2) {
@@ -186,8 +186,7 @@ abstract contract OneTimeSignerTestBase is Test {
         list[2] = c;
     }
 
-    /// @dev Same layout as `buildSignatureBytes` in the Safe repository: sorted by signer, static parts first, then the
-    ///      dynamic parts in the same order.
+    /// @dev Same layout as Safe's `buildSignatureBytes`: sorted by signer, static parts, then dynamic parts.
     function encodeSignatures(SafeSignature[] memory signatures) internal pure returns (bytes memory) {
         for (uint256 i = 1; i < signatures.length; ++i) {
             for (uint256 j = i; j > 0 && signatures[j - 1].signer > signatures[j].signer; --j) {
@@ -233,7 +232,7 @@ abstract contract OneTimeSignerTestBase is Test {
         list[2] = c;
     }
 
-    /// @dev Deploys a Safe through the factory in one transaction, optionally enabling the guard during setup.
+    /// @dev Deploys a Safe in one factory call, optionally with the guard.
     function createSafe(address[] memory safeOwners, uint256 threshold, bool withGuard) internal returns (Safe) {
         address to = withGuard ? address(setupHelper) : address(0);
         bytes memory data = withGuard ? abi.encodeCall(OneTimeSignerSetup.enableGuard, (address(guard))) : bytes("");

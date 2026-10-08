@@ -9,14 +9,9 @@ import {Enum} from "@safe-global/safe-smart-account/contracts/libraries/Enum.sol
 
 /**
  * @title OneTimeSignerGuard - Burns every one-time key that signs a Safe transaction.
- * @notice Intended for Safes whose owners are all {OneTimeSignerVault}s. Before execution, the guard reads the one-time key
- *         behind each vault signature and marks it as used for the calling Safe, so that key can never sign for it again.
- *         It also rejects signature bytes that carry anything beyond exactly `threshold` vault signatures: any extra
- *         signature would expose a key on-chain without burning it.
- * @dev The used-key registry is namespaced by `msg.sender`. Calling `checkTransaction` or `revokeKeys` directly only writes
- *      to the caller's own namespace, so pending signatures cannot be used to burn another Safe's keys.
- *      Unlike the other example guards, this guard has no fallback function: if a future Safe version calls a different
- *      hook, transactions revert instead of silently skipping key burning.
+ * @notice For Safes owned by {OneTimeSignerVault}s. Rejects anything but exactly `threshold` vault signatures, since an extra
+ *         signature would expose a key without burning it.
+ * @dev Used keys are tracked per caller, so direct calls only burn the caller's own keys. No fallback: fails closed.
  */
 contract OneTimeSignerGuard is BaseTransactionGuard, SignatureDecoder {
     using SafeMath for uint256;
@@ -28,11 +23,8 @@ contract OneTimeSignerGuard is BaseTransactionGuard, SignatureDecoder {
     event KeyRevoked(address indexed safe, address indexed key);
 
     /**
-     * @notice Called by the Safe contract before a transaction is executed, after its signatures were verified.
-     * @dev Requires the signatures to be encoded canonically: `threshold` contract signatures (v = 0) followed by their
-     *      dynamic parts in the same order, without gaps or trailing bytes. This is the encoding the Safe tooling produces.
-     *      As the Safe already verified each dynamic part with its vault, the key declared in it is authentic.
-     * @param signatures Signature data of the Safe transaction.
+     * @dev Expects `threshold` contract signatures followed by their dynamic parts in order, with nothing after.
+     *      The Safe has already verified each vault signature, so the key it declares is authentic.
      */
     function checkTransaction(
         address,
@@ -43,7 +35,6 @@ contract OneTimeSignerGuard is BaseTransactionGuard, SignatureDecoder {
         uint256,
         uint256,
         address,
-        // solhint-disable-next-line no-unused-vars
         address payable,
         bytes memory signatures,
         address
@@ -62,18 +53,9 @@ contract OneTimeSignerGuard is BaseTransactionGuard, SignatureDecoder {
         require(dynamicPartOffset == signatures.length, "Signatures must encode exactly threshold vault signatures");
     }
 
-    /**
-     * @notice Called by the Safe contract after a transaction is executed.
-     * @dev No-op: keys are burned before execution.
-     */
     function checkAfterExecution(bytes32, bool) external view override {}
 
-    /**
-     * @notice Marks one-time keys of the calling Safe as used without them signing a transaction.
-     * @dev Meant to be called by the Safe itself, through a Safe transaction, for keys whose signatures were shared for a
-     *      transaction that never got executed.
-     * @param keys One-time keys to revoke.
-     */
+    /// @notice Burns keys of the calling Safe, e.g. keys whose signatures were shared but never executed.
     function revokeKeys(address[] calldata keys) external {
         for (uint256 i = 0; i < keys.length; ++i) {
             isKeyUsed[msg.sender][keys[i]] = true;
@@ -81,24 +63,17 @@ contract OneTimeSignerGuard is BaseTransactionGuard, SignatureDecoder {
         }
     }
 
-    /**
-     * @dev Reads the dynamic part of a contract signature starting at `offset`.
-     *      The one-time key is the first word of the signature data, see {OneTimeSignerVault}.
-     * @return length Length of the signature data.
-     * @return key One-time key declared in the signature data.
-     */
+    /// @dev Returns the length of the dynamic part at `offset` and the key in its first word.
     function readDynamicPart(bytes memory signatures, uint256 offset) private pure returns (uint256 length, address key) {
         require(offset.add(64) <= signatures.length, "Signatures must encode exactly threshold vault signatures");
         uint256 keyWord;
-        /* solhint-disable no-inline-assembly */
         /// @solidity memory-safe-assembly
         assembly {
             length := mload(add(add(signatures, offset), 0x20))
             keyWord := mload(add(add(signatures, offset), 0x40))
         }
-        /* solhint-enable no-inline-assembly */
         require(length >= 32, "Signatures must encode exactly threshold vault signatures");
-        // The vault decodes the same word as an address: ABI coder v2 rejects dirty upper bits, v1 drops them like this cast.
+        // Matches how the vault decodes this word.
         // forge-lint: disable-next-line(unsafe-typecast)
         key = address(uint160(keyWord));
     }
