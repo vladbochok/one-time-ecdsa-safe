@@ -14,7 +14,7 @@ years, so their public key sits on-chain long before anyone can attack it.
 ECDSA is only secure while deriving a private key from its public key is infeasible. Two things could change that:
 
 - **Quantum computers.** A large enough one can derive private keys with Shor's algorithm. Quantum research is moving fast, and
-  AI is accelerating it, so that day ("Q-Day") may come sooner than expected.
+  AI is accelerating it, so that may happen sooner than expected.
 - **A classical breakthrough.** A new algorithm for the elliptic curve discrete logarithm problem, for example one found with
   AI-assisted research, could make keys breakable on ordinary GPUs, with no quantum computer at all.
 
