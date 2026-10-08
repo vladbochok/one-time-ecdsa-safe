@@ -1,7 +1,7 @@
 # pq-ready-safe
 
-One-time signer keys for [Safe](https://github.com/safe-global/safe-smart-account) multisigs, so a Safe keeps operating after
-ECDSA becomes breakable by quantum computers.
+One-time signer keys for [Safe](https://github.com/safe-global/safe-smart-account) multisigs, so a Safe keeps operating if
+ECDSA gets broken, whether by a quantum computer or by a new classical algorithm.
 
 > [!WARNING]
 > Unaudited research code.
@@ -11,23 +11,28 @@ ECDSA becomes breakable by quantum computers.
 Safe owners sign with ECDSA. Every ECDSA signature reveals the signer's public key, and a regular owner reuses the same key for
 years, so their public key sits on-chain long before anyone can attack it.
 
-A large enough quantum computer can derive a private key from its public key. Quantum computing research is moving fast, and AI
-is accelerating it, so that day ("Q-Day") may come sooner than expected. For a multisig holding millions of dollars, Q-Day is the
-worst case: an attacker derives the owners' keys and drains it.
+ECDSA is only secure while deriving a private key from its public key is infeasible. Two things could change that:
+
+- **Quantum computers.** A large enough one can derive private keys with Shor's algorithm. Quantum research is moving fast, and
+  AI is accelerating it, so that day ("Q-Day") may come sooner than expected.
+- **A classical breakthrough.** A new algorithm for the elliptic curve discrete logarithm problem, for example one found with
+  AI-assisted research, could make keys breakable on ordinary GPUs, with no quantum computer at all.
+
+For a multisig holding millions of dollars, either one is the worst case: an attacker derives the owners' keys and drains it.
 
 ## The approach
 
-The complete fix is post-quantum signatures, but verifying them on the EVM is still very expensive. This project uses one-time
-ECDSA keys instead:
+The complete fix is a different signature scheme, such as post-quantum signatures, but verifying those on the EVM is still very
+expensive. This project uses one-time ECDSA keys instead:
 
 - Each signer derives a pool of addresses from their seed. An address is only a hash of a public key, so before a key signs there
-  is nothing for a quantum computer to attack.
+  is nothing to attack.
 - The Safe accepts each address only once. As soon as a key signs, it is marked as used, and the Safe never accepts another
   signature from that address.
 - Breaking a key takes time once its public key is exposed. By then the signed transaction is already on-chain and the key is
   dead. So the Safe keeps operating even if ECDSA keys can be broken in days or hours.
 
-It's not a complete solution, but it lets a critical multisig be prepared for Q-Day.
+It's not a complete solution, but it lets a critical multisig be prepared for the day ECDSA breaks.
 
 ## Rules for signers
 
@@ -51,7 +56,7 @@ signs, in the same transaction. There is no module and no change to Safe.
 | `OneTimeSignerSetup` | Enables the guard during `Safe.setup`. |
 
 To rotate a pool, swap in a new vault with `swapOwner`. Replacing the ECDSA keys with hash-based one-time keys (e.g. WOTS+) would
-make the scheme fully post-quantum.
+remove the dependency on ECDSA entirely.
 
 ## Usage
 
