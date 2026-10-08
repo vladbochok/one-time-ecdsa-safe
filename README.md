@@ -8,17 +8,11 @@ ECDSA gets broken, whether by a quantum computer or by a new classical algorithm
 
 ## The problem
 
-Safe owners sign with ECDSA. Every ECDSA signature reveals the signer's public key, and a regular owner reuses the same key for
+Safe owners sign with ECDSA. Every signature reveals the signer's public key, and a regular owner reuses the same key for
 years, so their public key sits on-chain long before anyone can attack it.
 
-ECDSA is only secure while deriving a private key from its public key is infeasible. Two things could change that:
-
-- **Quantum computers.** A large enough one can derive private keys with Shor's algorithm. Quantum research is moving fast, and
-  AI is accelerating it, so that may happen sooner than expected.
-- **A classical breakthrough.** A new algorithm for the elliptic curve discrete logarithm problem, for example one found with
-  AI-assisted research, could make keys breakable on ordinary GPUs, with no quantum computer at all.
-
-For a multisig holding millions of dollars, either one is the worst case: an attacker derives the owners' keys and drains it.
+If quantum computers, or an algorithm found by a superintelligent AI, ever break ECDSA, an attacker could derive the owners' keys
+from those public keys and drain a multisig holding millions of dollars.
 
 ## The approach
 
