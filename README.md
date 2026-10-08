@@ -1,4 +1,4 @@
-# pq-ready-safe
+# one-time-ecdsa-safe
 
 One-time signer keys for [Safe](https://github.com/safe-global/safe-smart-account) multisigs, so a Safe keeps operating if
 ECDSA gets broken, whether by a quantum computer or by a new classical algorithm.
@@ -55,7 +55,7 @@ remove the dependency on ECDSA entirely.
 ## Usage
 
 ```shell
-git clone --recursive https://github.com/vladbochok/pq-ready-safe.git && cd pq-ready-safe
+git clone --recursive https://github.com/vladbochok/one-time-ecdsa-safe.git && cd one-time-ecdsa-safe
 forge test
 ```
 
